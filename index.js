@@ -76,6 +76,51 @@ app.post('/login', async (req, res) => {
   }
 });
 
+
+// upload post route
+// Upload post route without token
+app.post('/uploadPost', upload.single('pimg'), async (req, res) => {
+  try {
+    const { email, pdetails, ptags } = req.body; // Accept email, details, and tags
+    const imagePath = req.file ? req.file.filename : null;
+
+    if (!email || !pdetails || !ptags || !imagePath) {
+      return res.status(400).send('Missing required fields');
+    }
+
+    // Fetch username and userphoto based on email
+    const userQuery = `
+      SELECT uname, photo_path 
+      FROM users 
+      WHERE email = $1;
+    `;
+    const userResult = await pool.query(userQuery, [email]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).send('User not found');
+    }
+
+    const { uname: username, photo_path: userphoto } = userResult.rows[0];
+
+    // Insert post into the database
+    const postQuery = `
+      INSERT INTO posts (username, userphoto, pdetails, ptags, pimg)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *;
+    `;
+    const postValues = [username, userphoto, pdetails, ptags, imagePath];
+
+    const postResult = await pool.query(postQuery, postValues);
+
+    res.status(201).send(`Post created successfully: ID ${postResult.rows[0].postid}`);
+  } catch (error) {
+    console.error('Error uploading post:', error);
+    res.status(500).send('Error uploading post');
+  }
+});
+
+
+
 // Start the server
 app.listen(3000, () => {
   console.log('Server is running on port 3000');
