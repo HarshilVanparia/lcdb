@@ -3,6 +3,8 @@ const multer = require('multer');
 const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
+const bodyParser = require('body-parser');
+const cors = require('cors');
 
 const app = express();
 app.use(express.json());
@@ -42,31 +44,48 @@ app.post('/register', upload.single('photo_path'), async (req, res) => {
     const { uname, email, unumber, country, city, address, upassword } = req.body;
     const imageFilename = req.file ? req.file.filename : null;
 
-    const query = `
+    // Check if email already exists
+    const emailCheckQuery = `SELECT * FROM users WHERE email = $1`;
+    const emailCheckResult = await pool.query(emailCheckQuery, [email]);
+
+    if (emailCheckResult.rows.length > 0) {
+      return res.status(409).json({ message: 'Email is already registered' });
+    }
+
+    // Insert user if email does not exist
+    const insertQuery = `
       INSERT INTO users (uname, email, unumber, country, city, address, upassword, photo_path)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING *;
+      RETURNING userid, uname, email;
     `;
     const values = [uname, email, unumber, country, city, address, upassword, imageFilename];
+    const result = await pool.query(insertQuery, values);
 
-    const result = await pool.query(query, values);
-    res.status(201).send(`User registered successfully: ID ${result.rows[0].id}`);
+    res.status(201).json({
+      message: 'User registered successfully',
+      user: {
+        userid: result.rows[0].userid,
+        uname: result.rows[0].uname,
+        email: result.rows[0].email,
+      },
+    });
   } catch (error) {
     console.error('Error registering user:', error);
-    res.status(500).send('Error registering user');
+    res.status(500).json({ message: 'Failed to register user' });
   }
 });
+
 
 // Login route
 app.post('/login', async (req, res) => {
   try {
     const { email, upassword } = req.body;
-    const query = 'SELECT uname, email, address, photo_path FROM users WHERE email = $1 AND upassword = $2';
+    const query = 'SELECT userid, uname, email, address, photo_path FROM users WHERE email = $1 AND upassword = $2';
     const values = [email, upassword];
 
     const result = await pool.query(query, values);
     if (result.rows.length > 0) {
-      res.status(200).json(result.rows[0]);
+      res.status(200).json(result.rows[0]); // Send the full user data as JSON
     } else {
       res.status(401).send('Invalid credentials');
     }
@@ -77,7 +96,7 @@ app.post('/login', async (req, res) => {
 });
 
 
-// upload post route
+
 // Upload post route without token
 app.post('/uploadPost', upload.single('pimg'), async (req, res) => {
   try {
@@ -120,6 +139,127 @@ app.post('/uploadPost', upload.single('pimg'), async (req, res) => {
 });
 
 
+// Add Product Endpoint
+app.post('/addProduct', async (req, res) => {
+  const { product_title, title, pdetails, pimg, brandName } = req.body;
+
+  if (!product_title || !title || !pdetails || !pimg || !brandName) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  const sql = `
+    INSERT INTO products (product_title, title, pdetails, pimg, brandName)
+    VALUES ($1, $2, $3, $4, $5) RETURNING pid
+  `;
+
+  try {
+    const result = await pool.query(sql, [product_title, title, pdetails, pimg, brandName]);
+    res.status(201).json({
+      message: 'Product added successfully',
+      productId: result.rows[0].pid,
+    });
+  } catch (err) {
+    console.error('Error inserting product:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Add Category Endpoint
+app.post('/addCategory', async (req, res) => {
+  const { title, img } = req.body;
+
+  if (!title || !img) {
+    return res.status(400).json({ error: 'Title and image are required' });
+  }
+
+  const sql = `
+    INSERT INTO categories (title, img)
+    VALUES ($1, $2) RETURNING id
+  `;
+
+  try {
+    const result = await pool.query(sql, [title, img]);
+    res.status(201).json({
+      message: 'Category added successfully',
+      categoryId: result.rows[0].id,
+    });
+  } catch (err) {
+    console.error('Error inserting category:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+
+
+
+
+
+// categories route
+app.get('/getCategories', async (req, res) => {
+  try {
+    console.log('Fetching categories...');
+    const query = 'SELECT id, title, img FROM categories ORDER BY id ASC'; // Fetch all categories
+    const result = await pool.query(query);
+
+    // Debugging response data
+    console.log('Fetched categories:', result.rows);
+
+    res.status(200).json(result.rows); // Send categories as JSON response
+  } catch (error) {
+    console.error('Error fetching categories:', error.message, error.stack);
+    res.status(500).json({ error: 'Error fetching categories' });
+  }
+});
+
+
+// Get all posts route
+app.get('/getPosts', async (req, res) => {
+  try {
+    console.log('Fetching posts...');
+    const query = 'SELECT * FROM posts ORDER BY postid DESC';
+    const result = await pool.query(query);
+
+    // Debugging response data
+    console.log('Fetched posts:', result.rows);
+
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error('Error fetching posts:', error.message, error.stack);
+    res.status(500).json({ error: 'Error fetching posts' });
+  }
+});
+
+
+app.use(cors());
+app.use(bodyParser.json());
+
+// Route to fetch comments for a specific post
+// Add comment
+app.post('/add-comment', async (req, res) => {
+  try {
+    const { postid, userid, userphoto, username, comment } = req.body;
+    const query = 'INSERT INTO comments (postid, userid, userphoto, username, comment) VALUES ($1, $2, $3, $4, $5) RETURNING *';
+    const result = await pool.query(query, [postid, userid, userphoto, username, comment]);
+    res.status(201).json({ comment: result.rows[0] });
+  } catch (error) {
+    console.error('Error adding comment:', error);
+    res.status(500).json({ error: 'Failed to add comment' });
+  }
+});
+
+// Fetch comments for a post
+app.get('/comments/:postid', async (req, res) => {
+  try {
+    const { postid } = req.params;
+    const query = 'SELECT * FROM comments WHERE postid = $1 ORDER BY created_at DESC';
+    const result = await pool.query(query, [postid]);
+    res.status(200).json({ comments: result.rows });
+  } catch (error) {
+    console.error('Error fetching comments:', error);
+    res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
 
 // Start the server
 app.listen(3000, () => {
