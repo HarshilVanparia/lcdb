@@ -75,25 +75,61 @@ app.post('/register', upload.single('photo_path'), async (req, res) => {
   }
 });
 
+// UserProfiledata route
+app.get('/getUserProfile', async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId) {
+    return res.status(400).json({ message: 'User ID is required' });
+  }
+
+  try {
+    const query = 'SELECT uname, email, address, photo_path FROM users WHERE id = $1';
+    const result = await pool.query(query, [userId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Error retrieving user profile' });
+  }
+});
 
 // Login route
 app.post('/login', async (req, res) => {
   try {
     const { email, upassword } = req.body;
-    const query = 'SELECT userid, uname, email, address, photo_path FROM users WHERE email = $1 AND upassword = $2';
+
+    // Validate input
+    if (!email || !upassword) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    // Query to check the user credentials
+    const query = `
+      SELECT userid, uname, email, address, photo_path 
+      FROM users 
+      WHERE email = $1 AND upassword = $2
+    `;
     const values = [email, upassword];
 
+    // Execute the query
     const result = await pool.query(query, values);
+
     if (result.rows.length > 0) {
-      res.status(200).json(result.rows[0]); // Send the full user data as JSON
+      // Return user data (excluding password for security reasons)
+      const user = result.rows[0];
+      return res.status(200).json(user);
     } else {
-      res.status(401).send('Invalid credentials');
+      return res.status(401).json({ message: 'Invalid email or password' });
     }
   } catch (error) {
-    console.error('Error during login:', error);
-    res.status(500).send('Error logging in');
+    console.error('Error during login:', error.message);
+    return res.status(500).json({ message: 'Internal server error' });
   }
 });
+
 
 
 
@@ -139,21 +175,32 @@ app.post('/uploadPost', upload.single('pimg'), async (req, res) => {
 });
 
 
+
+
 // Add Product Endpoint
 app.post('/addProduct', async (req, res) => {
-  const { product_title, title, pdetails, pimg, brandName } = req.body;
+  const { product_title, title, pdetails, pimg, brandName, categoryId } = req.body;
 
-  if (!product_title || !title || !pdetails || !pimg || !brandName) {
-    return res.status(400).json({ error: 'All fields are required' });
+  if (
+    !product_title?.trim() ||
+    !title?.trim() ||
+    !pdetails?.trim() ||
+    !pimg?.trim() ||
+    !brandName?.trim() ||
+    !categoryId
+  ) {
+    return res.status(400).json({ error: 'All fields (title, details, image, brand, category) are required' });
   }
 
   const sql = `
-    INSERT INTO products (product_title, title, pdetails, pimg, brandName)
-    VALUES ($1, $2, $3, $4, $5) RETURNING pid
+    INSERT INTO products (product_title, title, pdetails, pimg, brandName, categoryId)
+    VALUES ($1, $2, $3, $4, $5, $6) RETURNING pid
   `;
 
   try {
-    const result = await pool.query(sql, [product_title, title, pdetails, pimg, brandName]);
+    const result = await pool.query(sql, [
+      product_title, title, pdetails, pimg, brandName, categoryId
+    ]);
     res.status(201).json({
       message: 'Product added successfully',
       productId: result.rows[0].pid,
@@ -164,7 +211,8 @@ app.post('/addProduct', async (req, res) => {
   }
 });
 
-// Add Category Endpoint
+
+// Add Category Endpoint (for custom categories)
 app.post('/addCategory', async (req, res) => {
   const { title, img } = req.body;
 
@@ -179,19 +227,18 @@ app.post('/addCategory', async (req, res) => {
 
   try {
     const result = await pool.query(sql, [title, img]);
+    const categoryId = result.rows[0].id;
+
     res.status(201).json({
       message: 'Category added successfully',
-      categoryId: result.rows[0].id,
+      categoryId: categoryId,
+      categoryTitle: title, // Send back the category title
     });
   } catch (err) {
     console.error('Error inserting category:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });
-
-
-
-
 
 
 
@@ -231,15 +278,16 @@ app.get('/getPosts', async (req, res) => {
 });
 
 
-app.use(cors());
-app.use(bodyParser.json());
 
-// Route to fetch comments for a specific post
 // Add comment
 app.post('/add-comment', async (req, res) => {
   try {
     const { postid, userid, userphoto, username, comment } = req.body;
-    const query = 'INSERT INTO comments (postid, userid, userphoto, username, comment) VALUES ($1, $2, $3, $4, $5) RETURNING *';
+    const query = `
+      INSERT INTO comments (postid, userid, userphoto, username, comment)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *;
+    `;
     const result = await pool.query(query, [postid, userid, userphoto, username, comment]);
     res.status(201).json({ comment: result.rows[0] });
   } catch (error) {
@@ -248,11 +296,15 @@ app.post('/add-comment', async (req, res) => {
   }
 });
 
-// Fetch comments for a post
+// Fetch comments for a specific post
 app.get('/comments/:postid', async (req, res) => {
   try {
     const { postid } = req.params;
-    const query = 'SELECT * FROM comments WHERE postid = $1 ORDER BY created_at DESC';
+    const query = `
+      SELECT * FROM comments 
+      WHERE postid = $1 
+      ORDER BY created_at DESC;
+    `;
     const result = await pool.query(query, [postid]);
     res.status(200).json({ comments: result.rows });
   } catch (error) {
@@ -260,6 +312,12 @@ app.get('/comments/:postid', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch comments' });
   }
 });
+
+
+
+
+
+
 
 // Start the server
 app.listen(3000, () => {
