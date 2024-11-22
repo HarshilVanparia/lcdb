@@ -177,68 +177,98 @@ app.post('/uploadPost', upload.single('pimg'), async (req, res) => {
 
 
 
-// Add Product Endpoint
-app.post('/addProduct', async (req, res) => {
-  const { product_title, title, pdetails, pimg, brandName, categoryId } = req.body;
 
+
+// Add Product Endpoint
+app.post('/addProduct', upload.single('pimg'), async (req, res) => {
+  const { product_title, title, pdetails, brandName, categoryId } = req.body;
+  const pimg = req.file ? req.file.filename : null;
+
+  console.log('Received product:', req.body);
+  console.log('Uploaded Product Image:', req.file);
+
+  // Validate fields
   if (
     !product_title?.trim() ||
     !title?.trim() ||
     !pdetails?.trim() ||
-    !pimg?.trim() ||
     !brandName?.trim() ||
-    !categoryId
+    !categoryId ||
+    !pimg
   ) {
-    return res.status(400).json({ error: 'All fields (title, details, image, brand, category) are required' });
+    return res.status(400).json({
+      error: 'All fields (product title, category title, details, brand name, category ID, and image) are required',
+    });
   }
 
   const sql = `
-    INSERT INTO products (product_title, title, pdetails, pimg, brandName, categoryId)
+    INSERT INTO products (product_title, title, pdetails, pimg, brandName, category_id)
     VALUES ($1, $2, $3, $4, $5, $6) RETURNING pid
   `;
 
   try {
     const result = await pool.query(sql, [
-      product_title, title, pdetails, pimg, brandName, categoryId
+      product_title,
+      title,
+      pdetails,
+      pimg,
+      brandName,
+      categoryId,
     ]);
+
     res.status(201).json({
       message: 'Product added successfully',
       productId: result.rows[0].pid,
     });
   } catch (err) {
     console.error('Error inserting product:', err);
-    res.status(500).json({ error: 'Database error' });
+    res.status(500).json({ error: 'Database error while adding product' });
   }
 });
-
 
 // Add Category Endpoint (for custom categories)
-app.post('/addCategory', async (req, res) => {
-  const { title, img } = req.body;
+app.post('/addCategory', upload.single('img'), async (req, res) => {
+  const customTitle = req.body.title;
+  let imageName = 'default.png';
 
-  if (!title || !img) {
-    return res.status(400).json({ error: 'Title and image are required' });
+  if (req.file) {
+    imageName = req.file.filename;
   }
 
-  const sql = `
-    INSERT INTO categories (title, img)
-    VALUES ($1, $2) RETURNING id
-  `;
+  console.log('Received category title:', customTitle);
+  console.log('Category image:', imageName);
+
+  // Check for empty title
+  if (!customTitle?.trim()) {
+    console.error('Error: Missing category title');
+    return res.status(400).json({ error: 'Category title is required' });
+  }
 
   try {
-    const result = await pool.query(sql, [title, img]);
-    const categoryId = result.rows[0].id;
+    const query = `
+      INSERT INTO categories (title, img)
+      VALUES ($1, $2) RETURNING id
+    `;
+    const values = [customTitle, imageName];
+    const result = await pool.query(query, values);
 
-    res.status(201).json({
-      message: 'Category added successfully',
-      categoryId: categoryId,
-      categoryTitle: title, // Send back the category title
-    });
-  } catch (err) {
-    console.error('Error inserting category:', err);
-    res.status(500).json({ error: 'Database error' });
+    if (result.rows.length === 0) {
+      console.error('Error: No rows returned from database');
+      throw new Error('Insertion failed. No rows returned.');
+    }
+
+    const newCategoryId = result.rows[0].id;
+    console.log('Inserted category ID:', newCategoryId);
+
+    res.status(201).json({ categoryId: newCategoryId });
+  } catch (error) {
+    console.error('Database error:', error.message);
+    res.status(500).json({ error: 'Failed to add category.' });
   }
 });
+
+
+
 
 
 
@@ -310,6 +340,28 @@ app.get('/comments/:postid', async (req, res) => {
   } catch (error) {
     console.error('Error fetching comments:', error);
     res.status(500).json({ error: 'Failed to fetch comments' });
+  }
+});
+
+
+// fetching products
+app.get('/products/:category', async (req, res) => {
+  const { category } = req.params;
+  try {
+    const query = `
+      SELECT title, price, imageurl 
+      FROM products 
+      WHERE categoryname = $1;
+    `;
+    const result = await pool.query(query, [category]);
+
+    // Log the response for debugging
+    console.log('Fetched products:', result.rows);
+
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error('Error fetching products:', error);
+    res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
 
